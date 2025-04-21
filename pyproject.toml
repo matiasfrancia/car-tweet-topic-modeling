@@ -1,19 +1,37 @@
 [project]
 name = "car-topic-modeling"
 version = "0.1.0"
-description = ""
+description = "Car branch topic modeling + intent detection pipeline based on model trained on tweets"
 authors = [
-    {name = "Matias Francia",email = "matiasfrancia1@gmail.com"}
+    {name = "Matias Francia", email = "matiasfrancia1@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "pydantic (>=2.11.3,<3.0.0)",
+    "pydantic-settings (>=2.9.1,<3.0.0)",
+    "pandas (>=2.2.3,<3.0.0)",
+    "sentence-transformers (>=4.1.0,<5.0.0)",
+    "scikit-learn (>=1.6.1,<2.0.0)",
+    "bertopic (>=0.17.0,<0.18.0)",
+    "fastapi (>=0.115.12,<0.116.0)",
+    "uvicorn (>=0.34.2,<0.35.0)",
+    "typer (>=0.15.2,<0.16.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "matplotlib (>=3.10.1,<4.0.0)"
 ]
 
 [tool.poetry]
 packages = [{include = "car_topic_modeling", from = "src"}]
 package-mode = false
 
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
+ruff = "^0.11.6"
+mypy = "^1.15.0"
+pre-commit = "^4.2.0"
+ipykernel = "^6.29.5"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
