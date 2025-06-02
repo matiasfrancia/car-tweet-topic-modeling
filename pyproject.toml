@@ -6,7 +6,7 @@ authors = [
     {name = "Matias Francia", email = "matiasfrancia1@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "pydantic (>=2.11.3,<3.0.0)",
     "pydantic-settings (>=2.9.1,<3.0.0)",
@@ -19,12 +19,21 @@ dependencies = [
     "typer (>=0.15.2,<0.16.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "matplotlib (>=3.10.1,<4.0.0)",
-    "emoji (>=2.14.1,<3.0.0)"
+    "emoji (>=2.14.1,<3.0.0)",
+    "spacy (>=3.8.5,<4.0.0)",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0.tar.gz",
+    "spacy-ngram (>=0.0.3,<0.0.4)",
+    "datasketch (>=1.6.5,<2.0.0)",
+    "networkx (>=3.4.2,<4.0.0)",
+    "rapidfuzz (>=3.13.0,<4.0.0)",
+    "textacy (>=0.13.0,<0.14.0)",
+    "datamapplot (>=0.5.1,<0.6.0)"
 ]
+
 
 [tool.poetry]
 packages = [{include = "car_topic_modeling", from = "src"}]
-package-mode = false
+package-mode = true
 
 
 [tool.poetry.group.dev.dependencies]
@@ -33,6 +42,7 @@ ruff = "^0.11.6"
 mypy = "^1.15.0"
 pre-commit = "^4.2.0"
 ipykernel = "^6.29.5"
+wordcloud = "^1.9.4"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -1,0 +1,13 @@
+{
+    "want_new_car": "acquire_product",
+    "want_new_truck": "acquire_product",
+    "wanna_new_car": "acquire_product",
+    "new_car_want": "acquire_product",
+    "need_new_car": "acquire_product",
+    "think_want_new_car": "acquire_product",
+    "think_want_new": "acquire_product",
+    "bad_customer_service": "customer_service_complaint",
+    "terrible_customer_service": "customer_service_complaint",
+    "poor_customer_service": "customer_service_complaint",
+    "refund": "refund"
+  }
