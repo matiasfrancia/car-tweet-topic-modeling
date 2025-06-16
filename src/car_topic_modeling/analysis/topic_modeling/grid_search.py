@@ -1,161 +1,234 @@
-from itertools import product
-from typing import Any, Dict, Iterable, List, Tuple
-from scipy.sparse import csr_matrix
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Dict, Iterable, List
+
+from car_topic_modeling.analysis.topic_modeling.artifact_store import (
+    ArtifactStore,
+    run_or_load,
+)
+
+from ..config.factories import build_bertopic_pipeline_paths
+
+from ..config.types import (
+    BERTopicCfg,
+    BERTopicConfig,
+    BERTopicPaths,
+    BERTopicSearchResult,
+    DocEmbedder,
+    EmbedCfg,
+)
+from ...config.settings import get_settings
 
 import numpy as np
-from sklearn.metrics import silhouette_score
-from .vectorizer import build_document_term_matrix
-from textacy.tm import TopicModel
+from sklearn.decomposition import PCA
 
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
 from umap import UMAP
 import hdbscan
+import logging
+from bertopic.backend import OpenAIBackend
+import openai
 
 
-def grid_search_topic_modeling_traditional_ML(
-    docs: Iterable[str],
-    k_list: Tuple[int],
-    models: List[str],
-) -> Tuple[
-    float,  # score
-    TopicModel,  # best_model
-    Dict[str, Any],  # best_config
-    csr_matrix,  # best_dtm
-    List[str],  # best_terms
-]:
+log = logging.getLogger(__name__)
+
+# def coherence_score(
+#     model: BERTopic,
+#     docs: List[str],
+#     *,
+#     coherence: str = "c_v", # coherence metric type
+#     top_n_words: int = 10, # n words per topic to fit into the metric
+# ) -> float:
+#     """
+#     Compute the coherence of a fitted BERTopic model.
+
+#     Returns
+#     -------
+#     float : coherence
+#         Higher is better. Returns -1.0 if the model has fewer than 2 topics.
+#     """
+#     topics = model.get_topics()
+#     # drop outliers (-1) and empty topics
+#     topic_words = [
+#         [word for word, _ in words[:top_n_words]]
+#         for tid, words in topics.items()
+#         if tid >= 0 and words
+#     ]
+
+#     if len(topic_words) < 2:
+#         log.warning("Less than two topics => coherence undefined; returning -1.0")
+#         return -1.0
+
+#     # gensim needs tokenised docs
+#     tokenised_docs = [doc.split() for doc in docs]
+#     dictionary = Dictionary(tokenised_docs)
+#     corpus = [dictionary.doc2bow(text) for text in tokenised_docs]
+
+#     cm = CoherenceModel(
+#         topics=topic_words,
+#         texts=tokenised_docs,
+#         corpus=corpus,
+#         dictionary=dictionary,
+#         coherence=coherence,
+#     )
+#     return cm.get_coherence()
+
+
+def _rescale(x, inplace=False):
     """
-    Does grid-search to find the best configuration for the topic
-    modeling task given the docs passed as input, using nmf, lsa or
-    lda. It returns the data of the best configuration based on the
-    silhouette score.
-
-    Returns
-    -------
-    best_score : float
-        Best silhouette score obtained in the grid search.
-    best_model : textacy.tm.TopicModel
-        Best model found based on the silhouette score.
-    best_config : Dict[str, Any]
-        Best configuration of the search.
-    best_dtm : csr_matrix
-        Best configuration of the document-term matrix
-    best_terms : List[str]
-        List of terms used for creating the best dtm
+    Rescale an embedding so optimization will not have convergence
+    issues.
     """
-    best_score, best_model, best_config = -1.0, None, None
-    best_dtm: csr_matrix = None
-    best_terms: List[str] = []
-    docs: List[str] = [doc.split() for doc in docs]
+    if not inplace:
+        x = np.array(x, copy=True)
 
-    for model_name, k in product(models, k_list):
-        # create a weighted document-term matrix
-        dtm, terms = build_document_term_matrix(docs)
-        print(f"dtm shape = {dtm.shape}, terms shape = {len(terms)}")
-
-        tm = TopicModel(model=model_name, n_topics=k, alpha_W=0.0, alpha_H=0.0)
-        tm.fit(dtm)
-        theta = tm.transform(dtm)
-        labels = theta.argmax(axis=1)
-        score: float = silhouette_score(theta, labels, metric="cosine")
-        print(f"Silhouette score obtained with model={model_name}, k={k} was {score}.")
-
-        if score > best_score:
-            best_score = score
-            best_model = tm
-            best_config = dict(model=model_name, n_topics=k)
-            best_dtm = dtm
-            best_terms = terms
-
-    # TODO: make grid-search also with the dtm generation's configuration
-    return best_score, best_model, best_config, best_dtm, best_terms
+    x /= np.std(x[:, 0]) * 10000
+    return x
 
 
-def _umap_silhouette(emb: np.ndarray, labels: np.ndarray) -> float:
-    mask = labels >= 0  # drop outliers (-1) -> check if this is correct
-    if len(set(labels[mask])) < 2:  # silhouette needs ≥ 2 clusters
-        return -1.0
-    return silhouette_score(emb[mask], labels[mask], metric="euclidean")
+class EncodeAdapter:
+    """Adds an .encode() shim around back-ends that expose .embed()."""
+
+    def __init__(self, backend):
+        self._backend = backend
+
+    def encode(self, docs):
+        return self._backend.embed(docs)
+
+
+def _make_embedder(cfg: EmbedCfg) -> DocEmbedder:
+    """
+    Returns a DocEmbedder object, i.e., with an .encode(docs) method
+    """
+    settings = get_settings()
+    provider: str = cfg.provider
+    model: str = cfg.model_name
+
+    if provider == "openai":
+        client = openai.OpenAI(api_key=settings.openai_api_key)
+        backend = OpenAIBackend(client, model)
+        log.info(f"Generating embeddings for the docs with OpenAI's {model}")
+        return EncodeAdapter(backend)
+
+    log.info(f"Generating embeddings for the docs with SentenceTransformer's {model}")
+    return SentenceTransformer(model)
+
+
+def _train_bertopic(
+    cfg: BERTopicCfg,
+    umap_model: UMAP,
+    hdbscan_model: hdbscan.HDBSCAN,
+    emb_lowdim: np.ndarray,
+    docs: list[str],
+) -> BERTopic:
+    """
+    Returns a fully-fitted BERTopic model for run_or_load function.
+    """
+    bertopic_kwargs: Dict[str, Any] = asdict(cfg)
+    tm = BERTopic(
+        embedding_model=None,  # we pass embeddings directly in the fit method
+        umap_model=umap_model,
+        hdbscan_model=hdbscan_model,
+        **bertopic_kwargs,
+    )
+    tm.fit(docs, embeddings=emb_lowdim)
+    return tm
 
 
 def grid_search_topic_modeling_embedding_models(
     docs: Iterable[str],
-    param_grid: List[Dict],  # list of hyper-param dicts
-) -> Tuple[
-    float,  # best_score
-    BERTopic,  # best_model
-    Dict[str, Any],  # best_config
-    np.ndarray,  # umap_embeddings
-    Dict[int, int],  # topics_mapping
-]:
+    models_dir_path: Path,
+    param_grid: List[BERTopicConfig],  # list of bertopic hyper-param configs
+) -> BERTopicSearchResult:
     """
-    Train several BERTopic configurations and keep the one with the highest
-    silhouette score (computed on UMAP embeddings, outliers dropped).
+    Train several BERTopic configurations, saves the UMAP embeddings
+    and shows the best configurations
 
     Returns
     -------
-    best_score      : float
-    best_model      : BERTopic
-    best_config     : hyper-parameters that produced `best_model`
-    umap_embeddings : ndarray (n_docs x n_components)
-    topics_mapping  : {doc_id: topic_id}
+    search_result: BERTopicSearchResult
     """
     docs = list(docs)
-    best_score, best_model, best_config = -1.0, None, None
-    best_emb, best_map = None, None
+    search_result: BERTopicSearchResult = None
+    best_score: float = -1.0
 
-    embedder = SentenceTransformer("all-mpnet-base-v2")
-
-    print("Embeddings Grid-Search called")
+    artifact_store = ArtifactStore()
+    log.info("Embeddings Grid-Search called")
 
     for cfg in param_grid:
-        umap_model = UMAP(
-            init="random",
-            n_neighbors=cfg.get("n_neighbors", 30),
-            n_components=cfg.get("n_components", 5),
-            min_dist=cfg.get("min_dist", 0.0),
-            metric="cosine",
-            random_state=42,
+        # make paths for the bertopic model with all its steps
+        paths: BERTopicPaths = build_bertopic_pipeline_paths(models_dir_path, cfg)
+
+        embeddings: np.ndarray
+        embeddings, _ = run_or_load(
+            artifact_store,
+            paths.embeddings,
+            cfg.embeddings,
+            compute_fn=lambda: _make_embedder(cfg.embeddings).encode(docs),
         )
 
-        print("Created UMAP Model")
+        pca_embeddings: np.ndarray | None = None
+        if cfg.pca and cfg.pca.active:
+            pca_dims = cfg.pca.dimensions
+            pca_embeddings, _ = run_or_load(
+                artifact_store,
+                paths.pca,
+                cfg.pca,
+                compute_fn=lambda: _rescale(
+                    PCA(n_components=pca_dims).fit_transform(embeddings)
+                ),
+            )
+            log.info(
+                f"Generated PCA embeddings, calculated with {pca_dims} dimensions."
+            )
 
-        hdbscan_model = hdbscan.HDBSCAN(
-            min_cluster_size=cfg.get("min_cluster_size", 10),
-            min_samples=cfg.get("min_samples", 5),
-            metric="euclidean",
-            prediction_data=True,
-            cluster_selection_method="eom",
+        umap_kwargs: Dict[str, Any] = asdict(cfg.umap).copy()
+        umap_kwargs["init"] = (
+            pca_embeddings if pca_embeddings is not None else cfg.umap.init
+        )
+        umap_model = UMAP(**umap_kwargs)
+
+        log.info("Created UMAP model")
+        umap_embeddings: np.ndarray
+        umap_embeddings, _ = run_or_load(
+            artifact_store,
+            paths.umap,
+            cfg.umap,
+            compute_fn=lambda: umap_model.fit_transform(embeddings),
+        )
+        log.info("Generated/loaded UMAP embeddings")
+
+        hdbscan_model = hdbscan.HDBSCAN(**asdict(cfg.hdbscan), prediction_data=True)
+        log.info("Created HDBSCAN Model")
+
+        topic_model: BERTopic
+        topic_model, _ = run_or_load(
+            artifact_store,
+            paths.bertopic,
+            cfg.bertopic,
+            compute_fn=lambda: _train_bertopic(
+                cfg.bertopic, umap_model, hdbscan_model, umap_embeddings, docs
+            ),
         )
 
-        print("Created HDBSCAN Model")
+        topics: np.ndarray = topic_model.hdbscan_model.labels_
+        log.info("BERTopic Model fitted with current configuration and docs")
 
-        tm = BERTopic(
-            embedding_model=embedder,
-            umap_model=umap_model,
-            hdbscan_model=hdbscan_model,
-            top_n_words=15,
-            language="english",
-            calculate_probabilities=True,
-        )
+        # TODO: change silhouette by coherence
+        # score = coherence_score(topic_model, docs, top_n_words=cfg.bertopic.top_n_words)
+        score = 0.5
+        n_topics = int(np.unique(topics[topics >= 0]).size)
 
-        print("Created BERTopic Model")
-
-        topics, _ = tm.fit_transform(docs)
-
-        print("Fitted the BERTopic Model with the data")
-        emb = tm.umap_model.embedding_  # numpy array (n_docs × d)
-        score = _umap_silhouette(emb, np.array(topics))
-        n_topics = int(np.unique(np.array(topics)).max())
-        cfg["n_topics"] = n_topics
-
-        print(f"cfg={cfg} -> silhouette = {score:.3f}")
+        log.info(f"cfg={cfg} -> silhouette = {score:.3f}, (n_topics = {n_topics})")
 
         if score > best_score:
-            best_score, best_model, best_config = score, tm, cfg
-            best_emb = emb.copy()
-            best_map = {i: int(t) for i, t in enumerate(topics)}
+            best_score = score
+            search_result = BERTopicSearchResult(
+                score=score, cfg=cfg, paths=paths, n_topics=n_topics
+            )
 
-        print("Obtained the UMAP Embeddings")
+    if search_result is None:
+        raise RuntimeError("The topic-modeling search did not produced no valid model.")
 
-    return best_score, best_model, best_config, best_emb, best_map
+    return search_result

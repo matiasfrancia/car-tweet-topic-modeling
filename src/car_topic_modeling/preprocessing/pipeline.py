@@ -3,11 +3,10 @@ from .cleaner import TextCleaner
 
 
 class PreprocessingPipeline:
-    def __init__(self, company: str, mode: CleanType):
+    def __init__(self, company: str):
         self.company = company
-        self.mode = mode
-        self.cleaner = TextCleaner(company, mode)
+        self.cleaner = TextCleaner(company)
 
-    def preprocess(self, text: str, lang: str, author: str):
-        cleaned_text = self.cleaner.clean(text, lang, author)
+    def preprocess(self, text: str, lang: str, author: str, mode: CleanType):
+        cleaned_text = self.cleaner.clean(text, lang, author, mode)
         return cleaned_text

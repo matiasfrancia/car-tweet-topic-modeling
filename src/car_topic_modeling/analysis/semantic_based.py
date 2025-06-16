@@ -1,6 +1,6 @@
 from collections import Counter
-from pathlib import Path
 from typing import Dict, Iterable, List, Set
+from .config.types import SemanticPaths
 from datasketch import MinHash, MinHashLSH
 from difflib import SequenceMatcher
 import networkx as nx
@@ -13,13 +13,8 @@ settings = get_settings()
 
 
 class SemanticExtractor:
-    def __init__(
-        self,
-        dataset_path: Path,
-        labelled_path: Path,
-    ):
-        self._dataset_path = dataset_path
-        self._labelled_path = labelled_path
+    def __init__(self, paths: SemanticPaths):
+        self.paths = paths
 
         self._num_perm = settings.num_perm
         self._jaccard_th = settings.jaccard_threshold
@@ -43,7 +38,7 @@ class SemanticExtractor:
         self, reassign_intent: bool, chunk_size: int = 1_000
     ) -> Iterable[tuple[str, List[str]]]:
         for rows in read_csv_in_chunks(
-            self._dataset_path,
+            self.paths.dataset,
             text_col=["tweet_id", "tweet_clean_text", "intent"],
             chunk_size=chunk_size,
         ):
@@ -73,9 +68,9 @@ class SemanticExtractor:
         and by dropping tweets that have repeated texts.
         """
         first = True
-        self._labelled_path.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.labelled.parent.mkdir(parents=True, exist_ok=True)
 
-        for chunk in pd.read_csv(self._dataset_path, chunksize=10_000, dtype=str):
+        for chunk in pd.read_csv(self.paths.dataset, chunksize=10_000, dtype=str):
             if not reassign:
                 mask = chunk["intent"].str.strip().eq("") | chunk[
                     "intent"
@@ -90,10 +85,10 @@ class SemanticExtractor:
             )
 
             mode = "w" if first else "a"
-            chunk.to_csv(self._labelled_path, mode=mode, index=False, header=first)
+            chunk.to_csv(self.paths.labelled, mode=mode, index=False, header=first)
             first = False
 
-        print(f"Saved labelled dataset to {self._labelled_path}")
+        print(f"Saved labelled dataset to {self.paths.labelled}")
 
     def cluster(self, reassign_intent: bool = False) -> List[Set[str]]:
         # create shingles for each document/tweet

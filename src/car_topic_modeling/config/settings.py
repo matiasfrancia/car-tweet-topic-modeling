@@ -1,10 +1,12 @@
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     # ---------- General ---------- #
     package_name: str = "car_topic_modeling"
+    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
 
     # ----------- Data ---------- #
     raw_dir: str = "data/raw"
@@ -12,12 +14,13 @@ class Settings(BaseSettings):
     figures_dir: str = "src/" + package_name + "/data/figures"
     ngrams_dir: str = "src/" + package_name + "/data/ngram"
     labelled_dir: str = "src/" + package_name + "/data/labelled"
-    topic_models_dir: str = "src/" + package_name + "/data/topic_models"
+    topic_models_dir: str = "src/" + package_name + "/data/models"
     clean_tweets_file: str = "original_tweets_clean.csv"
     labelled_file: str = "original_tweets_labelled.csv"
     ngrams_file: str = "clean_tweets_ngrams.csv"
     wordcloud_file: str = "wordcloud.png"
     cluster_report_file: str = "topic_report.png"
+    datamap_file: str = "documents_datamap.html"
 
     # ---------- Preprocessing ---------- #
     n_gram: int = 4

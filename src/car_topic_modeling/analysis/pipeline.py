@@ -1,139 +1,164 @@
+from __future__ import annotations
+
+import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 
+from car_topic_modeling.utils.constants import CleanType
+
+from .config.factories import build_company_paths
+from .config.types import (
+    BERTopicCfg,
+    BERTopicConfig,
+    CompanyPaths,
+    EmbedCfg,
+    HDBSCANCfg,
+    PCACfg,
+    UMAPCfg,
+)
 from .topic_modeling.modeler import TopicModeler
-
 from .semantic_based import SemanticExtractor
 from .token_based import TokenExtractor
-from ..config.settings import get_settings
 
-
-settings = get_settings()
+log = logging.getLogger(__name__)
 
 
 class AnalysisPipeline:
+    """
+    High-level orchestrator for token-based, semantic-based and topic-model
+    intent extraction on a *single* company corpus.
+
+    Parameters
+    ----------
+    company : str
+        Company identifier used to build path layout.
+    paths : CompanyPaths, optional
+        Inject pre-built paths (useful for tests).
+    token_extractor : TokenExtractor, optional
+        Inject a custom extractor (for mocks / experiments).
+    semantic_extractor : SemanticExtractor, optional
+        Same for semantic step.
+    """
+
     def __init__(
         self,
         company: str,
-    ):
+        *,
+        paths: Optional[CompanyPaths] = None,
+        token_extractor: Optional[TokenExtractor] = None,
+        semantic_extractor: Optional[SemanticExtractor] = None,
+    ) -> None:
         self.company = company
+        self.paths = paths or build_company_paths(company)
 
-        self.dataset_path = (
-            Path(settings.processed_dir) / (company) / (settings.clean_tweets_file)
-        )
-        self.token_based_labelled_path = (
-            Path(settings.labelled_dir)
-            / "token_based"
-            / (company)
-            / (settings.labelled_file)
-        )
-        self.semantic_based_labelled_path = (
-            Path(settings.labelled_dir)
-            / "semantic_based"
-            / (company)
-            / (settings.labelled_file)
-        )
-        self.tm_clustering_labelled_path = (
-            Path(settings.labelled_dir)
-            / "topic_modeler"
-            / (company)
-            / (settings.labelled_file)
-        )
-        self.tm_model_dir = Path(settings.topic_models_dir) / (company)
-        self.wordcloud_path = (
-            Path(settings.figures_dir) / (self.company) / (settings.wordcloud_file)
-        )
-        self.cluster_report_path = (
-            Path(settings.figures_dir) / (self.company) / (settings.cluster_report_file)
-        )
-        self.ngrams_path = (
-            Path(settings.ngrams_dir) / (company) / (settings.ngrams_file)
+        self.token_extractor = token_extractor or TokenExtractor(self.paths.token)
+
+        self.semantic_extractor = semantic_extractor or SemanticExtractor(
+            self.paths.semantic
         )
 
-        self.token_extractor = TokenExtractor(
-            dataset_path=self.dataset_path,
-            labelled_path=self.token_based_labelled_path,
-            wordcloud_path=self.wordcloud_path,
-            ngrams_path=self.ngrams_path,
-        )
+    def extract_token_intents(self, *, max_words: int = 200) -> Path:
+        """
+        Extract n-grams, build word-cloud and return the path of the token-labelled CSV.
+        """
+        log.info("Extracting n-grams for %s...", self.company)
+        self.token_extractor.extract_ngrams()
 
-        self.semantic_extractor = SemanticExtractor(
-            dataset_path=self.token_based_labelled_path,
-            labelled_path=self.semantic_based_labelled_path,
-        )
+        log.info("Generating word-cloud...")
+        self.token_extractor.generate_word_cloud(max_words=max_words)
 
-    def extract_token_based_intents(self):
-        self.token_extractor.extract_n_grams()
-        self.token_extractor.generate_word_cloud(
-            max_words=200,
-            background="white",
-            width=800,
-            height=400,
-        )
+    def assign_token_intents(self, intent_mapping: Dict[str, str]) -> Path:
+        """
+        Apply a user-defined mapping (ngram -> intent) to the tweets.
 
-    def assign_token_based_intents(self, intent_mapping: Dict[str, str]):
-        self.token_extractor.assign_ngram_based_intents(intent_mapping=intent_mapping)
+        Returns
+        -------
+        Path
+            CSV of tweets now including the ``intent`` column.
+        """
+        self.token_extractor.assign_ngram_intents(intent_mapping)
+        return self.token_extractor.paths.labelled
 
-    def extract_semantic_based_intents(self, reassign_tb_intents: bool):
-        self.semantic_extractor.cluster(reassign_intent=reassign_tb_intents)
+    def extract_semantic_intents(self, *, reassign_intent: bool = False) -> Path:
+        """
+        Cluster tweets semantically and adds value to / overwrite the *intent*
+        column.
 
-    def execute_grid_search_for_topic_modeler(
+        Parameters
+        ----------
+        reassign_intent : bool
+            If True, previously assigned token-based intents can be overwritten.
+        """
+        self.semantic_extractor.cluster(reassign_intent=reassign_intent)
+        return self.semantic_extractor.paths.labelled
+
+    def search_topic_modeler(
         self,
-        paradigm: str,
-        min_k: int,
-        max_k: int,
-        step: int,
-    ):
+        *,
+        param_list: Optional[BERTopicConfig] = None,
+        clean_type: CleanType = CleanType.SOFT,
+    ) -> None:
         """
-        Reads the intermediate labelled dataset given by the semantic based
-        extraction and returns the best model found, using grid-search and
-        the Silhouette Score metric as a reference.
+        Run a grid-search over a list of parameters to test and save every
+        model under a hash-identified folder.
 
-        The grid-search optimizes using a list of intents' number and model.
+        Uses whichever scoring each strategy provides; BERTopic runs will be
+        cached for manual inspection.
         """
-        topic_modeler = TopicModeler(
-            # docs_path=self.semantic_based_labelled_path,
-            docs_path=self.dataset_path,
-            output_model_dir=self.tm_model_dir,
-            report_path=self.cluster_report_path,
-            paradigm=paradigm,
-        )
 
-        topic_modeler.grid_search(k_list=list(range(min_k, max_k, step)))
+        if param_list is None:
+            base_cfg = BERTopicConfig(
+                embeddings=EmbedCfg(
+                    provider="sentence_transformer",
+                    model_name="all-mpnet-base-v2",
+                    # provider="openai",
+                    # model_name="text-embedding-3-small"
+                ),
+                pca=PCACfg(
+                    active=False,  # disable PCA
+                ),
+                umap=UMAPCfg(n_neighbors=15, n_components=10, min_dist=0.1),
+                hdbscan=HDBSCANCfg(min_cluster_size=30, min_samples=1),
+                bertopic=BERTopicCfg(top_n_words=10, nr_topics=30),
+            )
+            param_list: List[BERTopicConfig] = [base_cfg]
+
+        modeler = TopicModeler(self.paths.topic, clean_type=clean_type)
+
+        log.info("Grid-searching the params in %s", param_list)
+        modeler.search(param_list=param_list)
 
     def visualize_2d_embeddings(
         self,
-        n_neighbors: int | None,
-        n_components: int | None,
-        min_dist: float | None,
-        metric: str | None,
-        sentence_model: str | None,
+        *,
+        n_neighbors: Optional[int] = None,
+        n_components: Optional[int] = None,
+        min_dist: Optional[float] = None,
+        metric: Optional[str] = None,
+        sentence_model: Optional[str] = None,
     ) -> None:
-        topic_modeler = TopicModeler(
-            docs_path=self.semantic_based_labelled_path,
-        )
-        topic_modeler.visualize_2d_embedding(
+        """
+        Produce an interactive 2-D UMAP scatter of document embeddings.
+        All parameters map 1-to-1 to BERTopic's `visualize_document_datamap`.
+        """
+        TopicModeler(self.paths.topic).visualize_2d_embedding(
             n_neighbors, n_components, min_dist, metric, sentence_model
         )
 
     def visualize_topic_modeler_results(
         self,
-        paradigm: str,
-        *,
-        # traditional/embeddings
-        model_name: str | None,
-        n_topics: int | None,
-    ):
+    ) -> None:
         """
-        Method to visualize the results and topics given by the models
+        Open topic bars, interactive topics plot and document datamap for a
+        *previously saved* run.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            Traditional backend name ('lda', 'nmf', ...).  Ignored by BERTopic.
+        n_topics : int, optional
+            Number of topics of the saved model.
         """
-        topic_modeler = TopicModeler(
-            docs_path=self.semantic_based_labelled_path,
-            # docs_path=self.dataset_path,
-            output_model_dir=self.tm_model_dir,
-            report_path=self.cluster_report_path,
-            model_name=model_name,
-            n_topics=n_topics,
-            paradigm=paradigm,
-        )
-        topic_modeler.visualize_model_results()
+        TopicModeler(
+            self.paths.topic,
+        ).visualize_model_results()

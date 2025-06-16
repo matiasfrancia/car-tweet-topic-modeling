@@ -1,56 +1,53 @@
+import logging
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from bertopic import BERTopic
+from car_topic_modeling.analysis.config.factories import build_bertopic_pipeline_paths
+from car_topic_modeling.analysis.topic_modeling.artifact_store import (
+    ArtifactStore,
+    run_or_load,
+)
+from car_topic_modeling.utils.constants import CleanType
+from ..config.types import (
+    BERTopicConfig,
+    BERTopicPaths,
+    BERTopicSearchResult,
+    CacheMode,
+    TopicModelingPaths,
+)
 from .visualization import visualize_UMAP_2d_embeddings
 from car_topic_modeling.utils.io import read_csv_in_chunks
 import numpy as np
-import scipy.sparse as sp
-from textacy.tm import TopicModel
 import webbrowser
 
-from .grid_search import (
-    grid_search_topic_modeling_embedding_models,
-    grid_search_topic_modeling_traditional_ML,
-)
-from .io import load_topic_model, save_topic_model
+from .grid_search import grid_search_topic_modeling_embedding_models
+
+log = logging.getLogger(__name__)
 
 
 class TopicModeler:
-    """ """
+    """
+    Train or load a BERTopic-based clustering model and open basic visualisations.
+
+    Parameters
+    ----------
+    paths : TopicModelingPaths
+        Folder layout for dataset, models and reports.
+    model_name, n_topics : str | int, optional
+        If provided, the constructor tries to *load* a previously saved
+        traditional (textacy) model instead of training BERTopic.
+    """
 
     def __init__(
         self,
-        docs_path: Path,
-        output_model_dir: Path | None = None,
-        report_path: Path | None = None,
-        paradigm: str | None = None,  # "embeddings" | "traditional"
-        model_name: str | None = None,
-        n_topics: int | None = None,
+        paths: TopicModelingPaths,
+        *,
+        clean_type: Optional[CleanType] = CleanType.SOFT,
     ):
-        self.paradigm = paradigm
-        self.output_model_dir = output_model_dir
-        self.report_path = report_path
+        self.paths = paths
+        self.clean_type = clean_type
 
-        # runtime attributes
-        self.score: float | None = None
-        self.model: BERTopic | TopicModel | None = None
-        self.model_cfg: Dict[str, Any] | None = None
-        self.aux_1: sp.csr_matrix | np.ndarray | None = None
-        self.aux_2: List[str] | Dict[int, int] | None = None
-
-        # preload model with its corresponding data
-        if model_name and n_topics:
-            cfg = {"model": model_name, "n_topics": n_topics}
-            self.model_cfg = cfg
-            self.model, self.aux_1, self.aux_2 = load_topic_model(
-                output_model_dir,
-                cfg,
-                model_type="embeddings" if paradigm == "embeddings" else "traditional",
-            )
-
-            print(self.model, self.aux_1.shape)
-
-        self.docs, self.raw_text = self._load_docs(docs_path)
+        self.docs, self.raw_text = self._load_docs(self.paths.dataset)
 
     def _load_docs(self, csv_path: Path) -> Tuple[List[str], List[str]]:
         """
@@ -60,90 +57,99 @@ class TopicModeler:
         # TODO: implement the actual iterable logic by adding the chunk of tweets
         # to the clustering model
         raw_texts, cleaned = [], []
+        clean_type: str = (
+            "aggressive" if self.clean_type == CleanType.AGGRESSIVE else "soft"
+        )
         for rows in read_csv_in_chunks(
-            csv_path, ["tweet_text", "tweet_clean_text", "intent"]
+            csv_path, ["tweet_text", f"tweet_{clean_type}_clean_text", "intent"]
         ):
             for raw, clean, intent in rows:
-                if intent != "" and intent != "nan":
+                if intent and str(intent).lower() != "nan":
                     continue
                 raw_texts.append(raw)
                 cleaned.append(clean)
         return cleaned, raw_texts
 
-    def grid_search(
+    def search(
         self,
-        *,
-        # traditional:
-        k_list: List[int] | None = None,
-        trad_models: tuple[str, ...] = ("lsa", "lda", "nmf"),
-        # embeddings:
-        emb_param_grid: List[Dict[str, Any]] | None = None,
+        param_list: List[BERTopicConfig],
     ) -> None:
         """
-        Train several configs, keep the best by Silhouette Score, then save it.
+        Train several configs for the BERTopic model.
+        Saves the results to a folder hashed with the parameters passed.
 
-        Parameters (depend on the paradigm):
+        For instance, it saves the embeddings generated through UMAP with
+        a name hashed using md5 based on the UMAP hyperparameters. The same
+        goes for HDBSCAN and BERTopic models.
+
+        Parameters:
         ------
-        traditional : supply `k_list` + optional `trad_models`
-        embeddings  : optionally supply `emb_param_grid`
+        param_list : List[BERTopicConfig]
+            List of dictionaries with different parameter configurations.
         """
-        if self.paradigm == "traditional":
-            if k_list is None:
-                raise ValueError("k_list must be provided for traditional search")
 
-            (self.score, self.model, self.model_cfg, dtm, terms) = (
-                grid_search_topic_modeling_traditional_ML(
-                    self.docs, k_list, trad_models
-                )
-            )
+        result: BERTopicSearchResult = grid_search_topic_modeling_embedding_models(
+            self.docs, self.paths.models_dir, param_list
+        )
 
-            save_topic_model(
-                self.model,
-                self.output_model_dir,
-                self.model_cfg,
-                model_type=self.paradigm,
-                dtm=dtm,
-                terms=terms,
-            )
-            self.aux_1, self.aux_2 = dtm, terms
+        log.info("Saved best model (coherence = %.3f)", result.score or float("nan"))
+        self.visualize_model_results(result.cfg)
 
-        elif self.paradigm == "embeddings":
-            if emb_param_grid is None:
-                emb_param_grid = [
-                    {
-                        # UMAP
-                        "n_neighbors": 15,
-                        "n_components": 20,
-                        "min_dist": 0.1,
-                        # HDBSCAN
-                        "min_cluster_size": 30,
-                        "min_samples": 1,
-                        # BERTopic
-                        "model": "BERTopic",
-                        "n_topics": None,  # to be filled when the model's created
-                    }
-                ]
+    def visualize_model_results(
+        self,
+        cfg: BERTopicConfig,
+    ) -> None:
+        """
+        Show topic bar-chart, interactive topic map, and document datamap.
+        """
+        if cfg is None:
+            raise ValueError("The hyper-parameter configuration or the must be passed.")
 
-            (self.score, self.model, self.model_cfg, umap_emb, topics_map) = (
-                grid_search_topic_modeling_embedding_models(self.docs, emb_param_grid)
-            )
+        log.info("Starting visualization of the model results.")
 
-            save_topic_model(
-                self.model,
-                self.output_model_dir,
-                self.model_cfg,
-                model_type=self.paradigm,
-                umap_embeddings=umap_emb,
-                topics_mapping=topics_map,
-            )
-            self.aux_1, self.aux_2 = umap_emb, topics_map
+        artifact_store = ArtifactStore()
 
-        else:
-            raise ValueError("paradigm must be 'traditional' or 'embeddings'")
+        bertopic_paths: BERTopicPaths = build_bertopic_pipeline_paths(
+            self.paths.models_dir, cfg
+        )
 
-        print(f"\nSaved best {self.paradigm} model (silhouette = {self.score:.3f})")
+        topic_model: BERTopic
+        topic_model, _ = run_or_load(
+            artifact_store,
+            bertopic_paths.bertopic,
+            cfg.bertopic,
+            mode=CacheMode.FORCE_LOAD,
+        )
 
-        self.visualize_model_results()
+        log.info("Loaded the topic model.")
+
+        umap_embeddings: np.ndarray
+        umap_embeddings, _ = run_or_load(
+            artifact_store, bertopic_paths.umap, cfg.umap, mode=CacheMode.FORCE_LOAD
+        )
+
+        log.info("Loaded the UMAP reduced embeddings.")
+
+        # topic_model.visualize_barchart(top_n_topics=cfg.bertopic.nr_topics)
+        log.info("Visualizing barchart.")
+        # topic_model.visualize_topics().show(open=True)
+        log.info("Visualizing topics.")
+
+        datamap = topic_model.visualize_document_datamap(
+            self.docs,
+            embeddings=umap_embeddings,
+            interactive=True,
+        )
+
+        log.info("Visualizing document datamap.")
+
+        self.paths.datamap.parent.mkdir(parents=True, exist_ok=True)
+        datamap.save(self.paths.datamap)
+
+        log.info("Opening datamap in the browser.")
+
+        webbrowser.open_new_tab(self.paths.datamap.as_uri())
+        log.info("Document datamap written to %s", self.paths.datamap)
 
     def visualize_2d_embedding(
         self,
@@ -154,17 +160,7 @@ class TopicModeler:
         sentence_model: str | None,
     ) -> None:
         """
-        Generates an embedding reduction of 2 dimensions to have an insight
-        about the clustering of the data. It also prints a plot in screen.
-
-        As it uses UMAP and SentenceTransformer, the following arguments are required:
-
-        Args:
-        n_neighbors: int
-        n_components: int
-        min_dist: float
-        metric: str
-        sentence_model: str
+        Reduce document embeddings to 2-D with UMAP and show an interactive scatter.
         """
         cfg: Dict[str, Any] = {
             "n_neighbors": n_neighbors,
@@ -174,45 +170,3 @@ class TopicModeler:
             "sentence_model": sentence_model,
         }
         visualize_UMAP_2d_embeddings(self.docs, cfg)
-
-    def visualize_model_results(self) -> None:
-        """
-        Visualizes the topic modeler results, depending on the type of model.
-        If it is:
-            - A "traditional" model: displays the documents per topic.
-            - An "embedding" model: displays different plots to show the clustering.
-        """
-        if self.paradigm == "traditional":
-            if not isinstance(self.model, TopicModel):
-                raise RuntimeError(
-                    "Current model is not a TopicModel, even though "
-                    "traditional ML visualization was called"
-                )
-
-            top_topic_docs = self.model.top_topic_docs(
-                self.model.get_doc_topic_matrix(self.aux_1)
-            )
-
-            for i, topic_docs in enumerate(top_topic_docs):
-                print(f"Topic {i}:")
-                for j, topic_doc in enumerate(topic_docs[1]):
-                    print(f"Doc {j}: {self.raw_text[topic_doc]}")
-
-        elif self.paradigm == "embeddings":
-            if not isinstance(self.model, BERTopic):
-                raise RuntimeError(
-                    "Current model is not a BERTopic model, even though "
-                    "embeddings visualization was called"
-                )
-
-            self.model.visualize_barchart(top_n_topics=15).show()
-            self.model.visualize_topics().show(open=True)
-            datamap = self.model.visualize_document_datamap(
-                self.docs,
-                embeddings=self.aux_1,
-                interactive=True,
-            )
-
-            datamap_path: Path = self.report_path.parent / "documents_datamap.html"
-            datamap.save(datamap_path)
-            webbrowser.open_new_tab(datamap_path.resolve().as_uri())

@@ -12,12 +12,6 @@ settings = get_settings()
 @app.command("clean")
 def clean_tweets(
     input_csv: Path,
-    clean_mode: CleanType = typer.Option(
-        CleanType.AGGRESSIVE,
-        help="Whether to make an 'aggressive' or 'soft' cleaning of the text. "
-        "'aggressive' should be used for traditional Topic Modeling "
-        "techniques (e.g. LDA), while 'soft' cleaning for embedding models.",
-    ),
     out: Path = typer.Option(
         None,
         help="Where to save cleaned text. Defaults to "
@@ -39,15 +33,23 @@ def clean_tweets(
     df = pd.read_csv(input_csv)
     typer.echo(f"Loaded {len(df)} rows from {input_csv}")
     company_name = input_csv.parent.name
-    pipe = PreprocessingPipeline(company_name, clean_mode)
+    pipe = PreprocessingPipeline(company_name)
 
     # remove rows that don't have information
     df = df[df["tweet_text"].notna()]
-    df["tweet_clean_text"] = df.apply(
-        lambda row: pipe.preprocess(row["tweet_text"], row["lang"], row["user_name"]),
+    df["tweet_soft_clean_text"] = df.apply(
+        lambda row: pipe.preprocess(
+            row["tweet_text"], row["lang"], row["user_name"], CleanType.SOFT
+        ),
         axis=1,
     )
-    df = df[df["tweet_clean_text"].str.len() > 0]
+    df["tweet_aggressive_clean_text"] = df.apply(
+        lambda row: pipe.preprocess(
+            row["tweet_text"], row["lang"], row["user_name"], CleanType.AGGRESSIVE
+        ),
+        axis=1,
+    )
+    df = df[df["tweet_aggressive_clean_text"].str.len() > 0]
     df["intent"] = "nan"
     df.to_csv(out, index=False)
 

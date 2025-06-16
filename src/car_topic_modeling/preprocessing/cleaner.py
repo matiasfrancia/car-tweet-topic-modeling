@@ -13,9 +13,8 @@ settings = get_settings()
 
 
 class TextCleaner:
-    def __init__(self, company: str, mode: CleanType):
+    def __init__(self, company: str):
         self.company = company
-        self.mode = mode
         self._mention_pattern = re.compile(r"@\w+")
         self._hashtag_pattern = re.compile(r"#\w+")
         self._url_pattern = re.compile(r"http\S+")
@@ -28,7 +27,7 @@ class TextCleaner:
         self._seen_tweets: Set[str] = set()
         self._punctuation_collapse = re.compile(r"([!?.,;:])\1{1,}")
 
-    def clean(self, text: str, lang: str, author: str) -> str:
+    def clean(self, text: str, lang: str, author: str, mode: CleanType) -> str:
         if not text:
             print("An empty text was given for cleaning.")
             return ""
@@ -38,15 +37,15 @@ class TextCleaner:
         text = self.transform_emojis(text)
         text = self.remove_mentions(text)
         text = self.remove_urls(text)
-        text = self.remove_short_queries(text)
         text = self.remove_numbers(text)
         text = self.remove_consecutive_duplicated_chars(text)
-        if self.mode == CleanType.AGGRESSIVE:
+        if mode == CleanType.AGGRESSIVE:
             text = self.remove_connectors(text)
             text = self.remove_punctuation(text)
             text = self.remove_stopwords(text)
             text = text.lower()
         text = re.sub(r"\s+", " ", text)
+        text = self.remove_short_queries(text)
         text = self.remove_duplicates(text)
         return text.strip()
 
@@ -120,7 +119,7 @@ class TextCleaner:
         """
         Removes short queries (less than 3 words).
         """
-        if len(text.split()) < 3:
+        if len(text.split()) < 5:
             return ""
         return text
 
