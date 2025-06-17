@@ -21,6 +21,8 @@ import numpy as np
 import webbrowser
 
 from .grid_search import grid_search_topic_modeling_embedding_models
+from plotly.io import renderers
+renderers.default = "browser" 
 
 log = logging.getLogger(__name__)
 
@@ -125,14 +127,17 @@ class TopicModeler:
 
         umap_embeddings: np.ndarray
         umap_embeddings, _ = run_or_load(
-            artifact_store, bertopic_paths.umap, cfg.umap, mode=CacheMode.FORCE_LOAD
+            artifact_store, 
+            bertopic_paths.umap, 
+            cfg.umap, 
+            mode=CacheMode.FORCE_LOAD
         )
 
         log.info("Loaded the UMAP reduced embeddings.")
 
         topic_model.visualize_barchart(top_n_topics=cfg.bertopic.nr_topics).show()
         log.info("Visualizing barchart.")
-        topic_model.visualize_topics().show(open=True)
+        topic_model.visualize_topics().show()
         log.info("Visualizing topics.")
 
         datamap = topic_model.visualize_document_datamap(

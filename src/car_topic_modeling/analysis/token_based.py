@@ -13,6 +13,7 @@ from wordcloud import WordCloud
 from ..config.settings import get_settings
 from collections import Counter
 import spacy
+import spacy_ngram
 import pandas as pd
 import matplotlib.pyplot as plt
 
