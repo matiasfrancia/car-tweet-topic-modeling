@@ -130,9 +130,9 @@ class TopicModeler:
 
         log.info("Loaded the UMAP reduced embeddings.")
 
-        # topic_model.visualize_barchart(top_n_topics=cfg.bertopic.nr_topics)
+        topic_model.visualize_barchart(top_n_topics=cfg.bertopic.nr_topics).show()
         log.info("Visualizing barchart.")
-        # topic_model.visualize_topics().show(open=True)
+        topic_model.visualize_topics().show(open=True)
         log.info("Visualizing topics.")
 
         datamap = topic_model.visualize_document_datamap(
