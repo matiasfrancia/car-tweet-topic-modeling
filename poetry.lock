@@ -863,14 +863,14 @@ analyze = ["crick", "distributed", "graphviz"]
 
 [[package]]
 name = "datamapplot"
-version = "0.5.1"
+version = "0.6.3"
 description = "A library for presentation and publication ready plots of data maps"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "datamapplot-0.5.1-py3-none-any.whl", hash = "sha256:3fbe4285ed467ac00ff506a263b502850dcc6c6f0ad5c63e75120a0c70075408"},
-    {file = "datamapplot-0.5.1.tar.gz", hash = "sha256:7d09de399d6b41a5524b0a18845f7488f49d82351f0c586b74a9448636dcda6a"},
+    {file = "datamapplot-0.6.3-py3-none-any.whl", hash = "sha256:5f06235c129e248bfda69ced0d6e9473322b6863ef1e1234d089d2b578f2f635"},
+    {file = "datamapplot-0.6.3.tar.gz", hash = "sha256:9fac5551d1f50278e000a21361b14cdabaa0924bf1da7a589500e9585b0fbc39"},
 ]
 
 [package.dependencies]
@@ -892,6 +892,7 @@ requests = "*"
 rjsmin = ">=1.2.2"
 scikit-image = ">=0.22"
 scikit-learn = ">=1.1"
+typing-extensions = "*"
 
 [[package]]
 name = "datashader"
@@ -3101,14 +3102,14 @@ files = [
 
 [[package]]
 name = "openai"
-version = "1.87.0"
+version = "1.88.0"
 description = "The official Python library for the openai API"
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 files = [
-    {file = "openai-1.87.0-py3-none-any.whl", hash = "sha256:f9bcae02ac4fff6522276eee85d33047335cfb692b863bd8261353ce4ada5692"},
-    {file = "openai-1.87.0.tar.gz", hash = "sha256:5c69764171e0db9ef993e7a4d8a01fd8ff1026b66f8bdd005b9461782b6e7dfc"},
+    {file = "openai-1.88.0-py3-none-any.whl", hash = "sha256:7edd7826b3b83f5846562a6f310f040c79576278bf8e3687b30ba05bb5dff978"},
+    {file = "openai-1.88.0.tar.gz", hash = "sha256:122d35e42998255cf1fc84560f6ee49a844e65c054cd05d3e42fda506b832bb1"},
 ]
 
 [package.dependencies]
@@ -6197,4 +6198,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "5f520c9be6b468a260ce14cc35acb53ef6278defbb48ba6c700a7f3b1710c020"
+content-hash = "9551af172f16d49e0509445bbc6fcf155131bd95bda4f27e7165509d3e386865"

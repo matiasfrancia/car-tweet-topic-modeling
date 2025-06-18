@@ -2,6 +2,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from car_topic_modeling.analysis.topic_modeling.adapters import OpenAIBackendAdapter
 from car_topic_modeling.analysis.topic_modeling.artifact_store import (
     ArtifactStore,
     run_or_load,
@@ -27,8 +28,6 @@ from sentence_transformers import SentenceTransformer
 from umap import UMAP
 import hdbscan
 import logging
-from bertopic.backend import OpenAIBackend
-import openai
 
 
 log = logging.getLogger(__name__)
@@ -87,16 +86,6 @@ def _rescale(x, inplace=False):
     return x
 
 
-class EncodeAdapter:
-    """Adds an .encode() shim around back-ends that expose .embed()."""
-
-    def __init__(self, backend):
-        self._backend = backend
-
-    def encode(self, docs):
-        return self._backend.embed(docs)
-
-
 def _make_embedder(cfg: EmbedCfg) -> DocEmbedder:
     """
     Returns a DocEmbedder object, i.e., with an .encode(docs) method
@@ -106,10 +95,8 @@ def _make_embedder(cfg: EmbedCfg) -> DocEmbedder:
     model: str = cfg.model_name
 
     if provider == "openai":
-        client = openai.OpenAI(api_key=settings.openai_api_key)
-        backend = OpenAIBackend(client, model)
         log.info(f"Generating embeddings for the docs with OpenAI's {model}")
-        return EncodeAdapter(backend)
+        return OpenAIBackendAdapter(model, api_key=settings.openai_api_key)
 
     log.info(f"Generating embeddings for the docs with SentenceTransformer's {model}")
     return SentenceTransformer(model)

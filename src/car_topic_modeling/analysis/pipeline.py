@@ -109,10 +109,10 @@ class AnalysisPipeline:
         if param_list is None:
             base_cfg = BERTopicConfig(
                 embeddings=EmbedCfg(
-                    provider="sentence_transformer",
-                    model_name="all-mpnet-base-v2",
-                    # provider="openai",
-                    # model_name="text-embedding-3-small"
+                    # provider="sentence_transformer",
+                    # model_name="all-mpnet-base-v2",
+                    provider="openai",
+                    model_name="text-embedding-3-small",
                 ),
                 pca=PCACfg(
                     active=False,  # disable PCA

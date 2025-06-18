@@ -27,9 +27,9 @@ dependencies = [
     "networkx (>=3.4.2,<4.0.0)",
     "rapidfuzz (>=3.13.0,<4.0.0)",
     "textacy (>=0.13.0,<0.14.0)",
-    "datamapplot (>=0.5.1,<0.6.0)",
     "openai (>=1.87.0,<2.0.0)",
     "nbformat (>=5.10.4,<6.0.0)",
+    "datamapplot (>=0.6.3,<0.7.0)",
 ]
 
 
