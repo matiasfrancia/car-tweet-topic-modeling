@@ -207,7 +207,7 @@ def grid_search_topic_modeling_embedding_models(
         score = 0.5
         n_topics = int(np.unique(topics[topics >= 0]).size)
 
-        log.info(f"cfg={cfg} -> silhouette = {score:.3f}, (n_topics = {n_topics})")
+        log.info(f"cfg={cfg} -> coherence = {score:.3f}, (n_topics = {n_topics})")
 
         if score > best_score:
             best_score = score

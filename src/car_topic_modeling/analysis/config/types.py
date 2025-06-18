@@ -113,6 +113,7 @@ class BERTopicCfg:
     language: str = "english"
     calculate_probabilities: bool = True
     nr_topics: int = 20
+    n_gram_range: int = (1, 1)
 
 
 @dataclass(frozen=True, slots=True)

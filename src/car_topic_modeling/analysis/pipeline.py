@@ -119,7 +119,7 @@ class AnalysisPipeline:
                 ),
                 umap=UMAPCfg(n_neighbors=15, n_components=10, min_dist=0.1),
                 hdbscan=HDBSCANCfg(min_cluster_size=30, min_samples=1),
-                bertopic=BERTopicCfg(top_n_words=10, nr_topics=30),
+                bertopic=BERTopicCfg(top_n_words=10, nr_topics=30, n_gram_range=(1, 3)),
             )
             param_list: List[BERTopicConfig] = [base_cfg]
 
